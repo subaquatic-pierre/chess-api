@@ -1,41 +1,38 @@
 #![allow(clippy::from_over_into)]
 
-use std::sync::{atomic::AtomicUsize, Arc};
+use std::sync::{atomic::AtomicUsize, Arc, Mutex};
 
-use actix::*;
+use actix_cors::Cors;
 use actix_files::Files;
 use actix_web::{middleware::Logger, web, App, HttpServer};
 
-mod actors;
+mod app;
 mod constants;
-mod messages;
-mod models;
+mod macros;
+mod message;
 mod routes;
+mod server;
+mod session;
 
-use actors::server;
-
-use routes::{chat, index};
+use app::new_app_state;
+use routes::{register_chat_routes, register_server_routes};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
 
-    // keep a count of the number of visitors
-    let count = Arc::new(AtomicUsize::new(0));
-
-    // start chat server actor
-    let server = server::ChatServer::new(count.clone()).start();
+    let app_state = new_app_state();
 
     log::info!("starting HTTP server at http://localhost:8080");
 
     HttpServer::new(move || {
         App::new()
-            .app_data(web::Data::new(server.clone()))
-            .service(chat::chat_route)
-            .service(index::index)
-            .service(index::get_count)
+            .app_data(app_state.clone())
+            .service(register_chat_routes())
+            .service(register_server_routes())
             .service(Files::new("/static", "./static"))
             .wrap(Logger::default())
+            .wrap(Cors::permissive())
     })
     .workers(2)
     .bind(("127.0.0.1", 8080))?

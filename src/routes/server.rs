@@ -1,9 +1,9 @@
+use actix_web::{get, web, web::scope, Responder, Scope};
+
 use std::sync::atomic::Ordering;
 
+use crate::server::ChatServer;
 use actix_files::NamedFile;
-use actix_web::{get, web, Responder};
-
-use crate::actors::server::ChatServer;
 
 #[get("/")]
 async fn index() -> impl Responder {
@@ -15,4 +15,8 @@ async fn index() -> impl Responder {
 async fn get_count(app_state: web::Data<ChatServer>) -> impl Responder {
     let current_count = app_state.visitor_count.load(Ordering::SeqCst);
     format!("Visitors: {current_count}")
+}
+
+pub fn register_server_routes() -> Scope {
+    scope("").service(index).service(get_count)
 }
