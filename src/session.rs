@@ -17,6 +17,7 @@ pub type SessionId = usize;
 pub struct SessionProfile {
     username: String,
     room: String,
+    game: String,
     id: SessionId,
 }
 
@@ -51,7 +52,7 @@ impl WsSession {
                 let chat_server = unlock!(self.chat_server);
                 let rooms = chat_server.list_rooms();
 
-                let msg = self.new_message(MessageType::RoomList, &rooms.join(","));
+                let msg = self.new_message(MessageType::RoomList, &rooms.join(","), true);
 
                 // send message back to client session
                 ctx.text(msg.to_string());
@@ -62,7 +63,7 @@ impl WsSession {
                 let chat_server = unlock!(self.chat_server);
                 let users = chat_server.list_users(&self.room);
 
-                let msg = self.new_message(MessageType::UserList, &users.join(","));
+                let msg = self.new_message(MessageType::UserList, &users.join(","), true);
 
                 // send message back to client session
                 ctx.text(msg.to_string());
@@ -84,7 +85,7 @@ impl WsSession {
 
                     chat_server.join_room(&new_room, self.id, &self.username);
                 } else {
-                    let msg = self.new_message(MessageType::Error, "Room name is required");
+                    let msg = self.new_message(MessageType::Error, "Room name is required", true);
 
                     // send message back to client session
                     ctx.text(msg.to_string());
@@ -103,7 +104,7 @@ impl WsSession {
 
                 server.new_game(self.id, &self.username);
 
-                let msg = self.new_message(MessageType::Status, "New game created");
+                let msg = self.new_message(MessageType::Status, "New game created", true);
 
                 // send message back to client session
                 ctx.text(msg.to_string());
@@ -123,6 +124,7 @@ impl WsSession {
                     let msg = self.new_message(
                         MessageType::Status,
                         &format!("New joined {game_name} chess game"),
+                        true,
                     );
 
                     // send message back to client session
@@ -142,7 +144,7 @@ impl WsSession {
 
                     // chat_server.join_room(&new_room, self.id, &self.username);
                 } else {
-                    let msg = self.new_message(MessageType::Error, "Game name is required");
+                    let msg = self.new_message(MessageType::Error, "Game name is required", true);
 
                     // send message back to client session
                     ctx.text(msg.to_string());
@@ -170,6 +172,7 @@ impl WsSession {
                 let msg = self.new_message(
                     MessageType::Status,
                     &format!("New left {} chess game", self.game),
+                    true,
                 );
 
                 // send message back to client session
@@ -190,8 +193,11 @@ impl WsSession {
                     .map(|game| game.0.to_string())
                     .collect::<Vec<String>>();
 
-                let msg =
-                    self.new_message(MessageType::AvailableGameList, &available_games.join(","));
+                let msg = self.new_message(
+                    MessageType::AvailableGameList,
+                    &available_games.join(","),
+                    true,
+                );
 
                 // send message back to client session
                 ctx.text(msg.to_string());
@@ -208,7 +214,7 @@ impl WsSession {
                     .map(|game| game.0.to_string())
                     .collect::<Vec<String>>();
 
-                let msg = self.new_message(MessageType::AllGameList, &all_games.join(","));
+                let msg = self.new_message(MessageType::AllGameList, &all_games.join(","), true);
 
                 // send message back to client session
                 ctx.text(msg.to_string());
@@ -221,17 +227,23 @@ impl WsSession {
                 let profile = SessionProfile {
                     username: self.username.clone(),
                     room: self.room.clone(),
+                    game: self.game.clone(),
                     id: self.id,
                 };
 
-                let msg = self.new_message(MessageType::Info, &profile.to_json());
+                let msg = self.new_message(MessageType::SelfInfo, &profile.to_json(), true);
 
                 // send message back to client session
                 ctx.text(msg.to_string());
             }
+
             _ => {
-                let msg =
-                    self.new_message(MessageType::Error, &format!("Unknown command: {msg:?}"));
+                log::info!("UNKNOWN: {msg:?}");
+                let msg = self.new_message(
+                    MessageType::Error,
+                    &format!("Unknown command: {msg:?}"),
+                    true,
+                );
 
                 // send message back to client session
                 ctx.text(msg.to_string())
@@ -242,16 +254,22 @@ impl WsSession {
     fn handle_message(&mut self, msg: &str) {
         let chat_server = unlock!(self.chat_server);
 
-        let msg = self.new_message(MessageType::ClientMessage, msg);
+        let msg = self.new_message(MessageType::ClientMessage, msg, false);
 
         chat_server.broadcast(&self.room, msg, self.id);
     }
 
-    fn new_message(&self, msg_type: MessageType, content: &str) -> Message {
+    fn new_message(&self, msg_type: MessageType, content: &str, server_msg: bool) -> Message {
+        let from_id = if server_msg { 0 } else { self.id };
+        let username = if server_msg {
+            "server".to_string()
+        } else {
+            self.username.clone()
+        };
         Message {
             msg_type,
-            from_id: self.id,
-            username: self.username.clone(),
+            from_id,
+            username,
             content: content.to_string(),
         }
     }
@@ -346,16 +364,11 @@ impl Actor for WsSession {
 
         log::info!("CLIENT CONNECTED");
 
-        let msg = self.new_message(MessageType::Status, "You connected to the server");
+        let msg = self.new_message(MessageType::Status, "You connected to the server", true);
 
         ctx.text(msg.to_json());
 
-        let session_id_msg = Message {
-            msg_type: MessageType::Connect,
-            from_id: 0,
-            username: "server".to_string(),
-            content: self.id.to_string(),
-        };
+        let session_id_msg = self.new_message(MessageType::Connect, &self.id.to_string(), true);
 
         ctx.text(session_id_msg.to_json())
     }

@@ -18,6 +18,9 @@ pub enum MessageType {
     Connect,
     Disconnect,
 
+    // UserInfo
+    SelfInfo,
+
     // Game Messages
     GameMove,
     AllGameList,

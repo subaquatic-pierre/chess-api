@@ -119,14 +119,9 @@ impl ChatServer {
     pub fn disconnect(&mut self, id: SessionId) {
         // remove session ID from rooms
         if let Some((username, addr)) = self.sessions.remove(&id) {
-            // close WS session
-            let close_msg = Message {
-                msg_type: MessageType::Disconnect,
-                from_id: id,
-                username: username.to_string(),
-                content: "Close Web Socket Session".to_string(),
-            };
-            addr.do_send(close_msg);
+            // NOTE:
+            // unable to send message to context
+            // Addr is not valid tx anymore
 
             self.leave_all_rooms(id, &username);
 
@@ -153,20 +148,8 @@ impl ChatServer {
 
     /// Main message used to send message only to the
     /// client with given session ID
-    pub fn send_client_msg(&self, msg: &str, msg_type: MessageType, session_id: SessionId) {
-        if let Some((username, addr)) = self.sessions.get(&session_id) {
-            let username = if msg_type == MessageType::Status {
-                "server".to_string()
-            } else {
-                username.to_string()
-            };
-
-            let msg = Message {
-                msg_type,
-                from_id: session_id,
-                username,
-                content: msg.to_string(),
-            };
+    pub fn send_client_msg(&self, session_id: SessionId, msg: Message) {
+        if let Some((_username, addr)) = self.sessions.get(&session_id) {
             addr.do_send(msg);
         }
     }
@@ -185,32 +168,25 @@ impl ChatServer {
             .insert(session_id);
 
         // send message to client that joined room
-        self.send_client_msg(
-            &format!("You joined {room_name} room"),
+        let msg = self.server_message(
             MessageType::Status,
-            session_id,
+            &format!("You joined the {room_name} room"),
         );
+        self.send_client_msg(session_id, msg);
 
         // notify all users within the room the that
         // session has connected to the room
         let join_content = format!("{username} joined {room_name} room");
-        let msg = Message {
-            msg_type: MessageType::Status,
-            from_id: session_id,
-            username: username.to_string(),
-            content: join_content,
-        };
+
+        let msg = self.server_message(MessageType::Status, &join_content);
         self.broadcast(room_name, msg, session_id);
 
         // notify all users with new user list
-        let msg = Message {
-            msg_type: MessageType::UserList,
-            from_id: session_id,
-            username: username.to_string(),
-            content: self.list_users(room_name).join(","),
-        };
+        // send message to client that joined room
+        let user_list_message =
+            self.server_message(MessageType::UserList, &self.list_users(room_name).join(","));
 
-        self.broadcast(room_name, msg, 0)
+        self.broadcast(room_name, user_list_message, 0)
     }
 
     /// Helper method used for a web socket session to leave all the rooms
@@ -237,20 +213,11 @@ impl ChatServer {
     }
 
     fn leave_room(&mut self, room_name: &str, session_id: SessionId, username: &str) {
-        // send message to client that joined room
-        // self.send_client_msg(
-        //     &format!("You left {room_name} room"),
-        //     MessageType::Status,
-        //     session_id,
-        // );
-
         // message for all other users
-        let user_join_msg = Message {
-            msg_type: MessageType::Status,
-            from_id: 0,
-            username: "server".to_string(),
-            content: format!("{username} left {room_name} room"),
-        };
+        let user_join_msg = self.server_message(
+            MessageType::Status,
+            &format!("{username} left the {room_name} room"),
+        );
 
         self.broadcast(room_name, user_join_msg, session_id);
 
@@ -260,14 +227,12 @@ impl ChatServer {
         }
 
         // message for all other users
-        let user_list_msg = Message {
-            msg_type: MessageType::UserList,
-            from_id: 0,
-            username: "server".to_string(),
-            content: self.list_users(room_name).join(","),
-        };
+        // notify all users with new user list
+        // send message to client that joined room
+        let user_list_message =
+            self.server_message(MessageType::UserList, &self.list_users(room_name).join(","));
 
-        self.broadcast(room_name, user_list_msg, session_id);
+        self.broadcast(room_name, user_list_message, 0)
     }
 
     pub fn list_rooms(&self) -> Vec<String> {
@@ -389,5 +354,17 @@ impl ChatServer {
 
         // self.broadcast(room_name, msg, session_id);
         HashMap::new()
+    }
+
+    // ---
+    // Private methods
+    // ---
+    fn server_message(&self, msg_type: MessageType, content: &str) -> Message {
+        Message {
+            msg_type,
+            from_id: 0,
+            username: "server".to_string(),
+            content: content.to_string(),
+        }
     }
 }
