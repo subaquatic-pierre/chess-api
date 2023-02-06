@@ -4,7 +4,7 @@ use rand::{self, Rng};
 use std::time::Instant;
 
 use crate::app::AppState;
-use crate::session;
+use crate::session::{self, SessionId};
 use crate::{server, unlock};
 
 use crate::message::{Message, MessageType};
@@ -26,12 +26,37 @@ async fn chat_route(
             id,
             hb: Instant::now(),
             room: "main".to_owned(),
+            game: "none".to_string(),
             username: name.to_owned(),
             chat_server: srv.chat_server.clone(),
         },
         &req,
         stream,
     )
+}
+
+#[get("/check-session/{session_id}")]
+async fn check_session(
+    session_id: web::Path<SessionId>,
+    req: HttpRequest,
+    stream: web::Payload,
+    srv: web::Data<AppState>,
+) -> impl Responder {
+    let chat_server = unlock!(srv.chat_server);
+
+    let content = match chat_server.sessions.get(&session_id) {
+        Some(_) => session_id.to_string(),
+        _ => "".to_string(),
+    };
+
+    let msg = Message {
+        msg_type: MessageType::Connect,
+        from_id: 0,
+        username: "server".to_string(),
+        content,
+    };
+
+    msg.to_http()
 }
 
 #[get("/check-username/{name}")]
@@ -93,6 +118,7 @@ async fn sessions(req: HttpRequest, srv: web::Data<AppState>) -> impl Responder 
 
 pub fn register_chat_routes() -> Scope {
     scope("")
+        .service(check_session)
         .service(sessions)
         .service(check_username)
         .service(chat_route)

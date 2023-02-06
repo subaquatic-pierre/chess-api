@@ -13,10 +13,15 @@ pub enum MessageType {
     ClientMessage,
     RoomList,
     UserList,
-    GameMove,
     Status,
     Error,
+    Connect,
     Disconnect,
+
+    // Game Messages
+    GameMove,
+    AllGameList,
+    AvailableGameList,
 }
 
 /// Chat server sends this messages to session

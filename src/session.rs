@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -29,6 +30,7 @@ pub struct WsSession {
 
     /// joined room
     pub room: String,
+    pub game: String,
 
     /// peer name
     pub username: String,
@@ -40,6 +42,9 @@ impl WsSession {
     fn handle_command(&mut self, msg: &str, ctx: &mut ws::WebsocketContext<Self>) {
         let v: Vec<&str> = msg.splitn(2, ' ').collect();
         match v[0] {
+            // ---
+            // Chat commands
+            // ---
             "/list-rooms" => {
                 // Send ListRooms message to chat server and wait for
                 // response
@@ -51,7 +56,6 @@ impl WsSession {
                 // send message back to client session
                 ctx.text(msg.to_string());
             }
-
             "/list-users" => {
                 // Send ListRooms message to chat server and wait for
                 // response
@@ -59,19 +63,6 @@ impl WsSession {
                 let users = chat_server.list_users(&self.room);
 
                 let msg = self.new_message(MessageType::UserList, &users.join(","));
-
-                // send message back to client session
-                ctx.text(msg.to_string());
-            }
-
-            "/self-info" => {
-                let profile = SessionProfile {
-                    username: self.username.clone(),
-                    room: self.room.clone(),
-                    id: self.id,
-                };
-
-                let msg = self.new_message(MessageType::Info, &profile.to_json());
 
                 // send message back to client session
                 ctx.text(msg.to_string());
@@ -98,6 +89,145 @@ impl WsSession {
                     // send message back to client session
                     ctx.text(msg.to_string());
                 }
+            }
+
+            // ---
+            // End chat commands
+            // ---
+
+            // ---
+            // Game Commands
+            // ---
+            "/new-game" => {
+                let mut server = unlock!(self.chat_server);
+
+                server.new_game(self.id, &self.username);
+
+                let msg = self.new_message(MessageType::Status, "New game created");
+
+                // send message back to client session
+                ctx.text(msg.to_string());
+            }
+
+            "/join-game" => {
+                if v.len() == 2 {
+                    // TODO:
+                    // Very naive logic for joining room
+                    // currently allows any room name to be joined
+                    let game_name = v[1].to_owned();
+
+                    let mut server = unlock!(self.chat_server);
+
+                    server.join_game(self.id, &game_name);
+
+                    let msg = self.new_message(
+                        MessageType::Status,
+                        &format!("New joined {game_name} chess game"),
+                    );
+
+                    // send message back to client session
+                    ctx.text(msg.to_string());
+
+                    // the only time the user changes a room is here
+                    // the current room of the session is updated here
+                    // ONLY
+
+                    // set room to `in_game`
+                    self.room = "in_game".to_string();
+
+                    // set game name
+                    self.game = game_name.clone();
+
+                    // let mut chat_server = unlock!(self.chat_server);
+
+                    // chat_server.join_room(&new_room, self.id, &self.username);
+                } else {
+                    let msg = self.new_message(MessageType::Error, "Game name is required");
+
+                    // send message back to client session
+                    ctx.text(msg.to_string());
+                }
+            }
+
+            "/leave-game" => {
+                // TODO:
+                // check if currently in game
+                // if not return error message
+                // saying `You are currently not in a game`
+
+                let mut server = unlock!(self.chat_server);
+
+                // server.leave_game(self.id, &game_name);
+
+                // the only time the user changes a room is here
+                // the current room of the session is updated here
+                // ONLY
+                // set room to `in_game`
+                self.room = "main".to_string();
+                // set game name
+                self.game = "none".to_string();
+
+                let msg = self.new_message(
+                    MessageType::Status,
+                    &format!("New left {} chess game", self.game),
+                );
+
+                // send message back to client session
+                ctx.text(msg.to_string());
+            }
+
+            "/list-available-games" => {
+                let server = unlock!(self.chat_server);
+
+                let all_games = server.list_games();
+
+                // build vector of strings of available games
+                let available_games = all_games
+                    .iter()
+                    .filter(|game| game.1 .1.is_none())
+                    .collect::<HashMap<&String, &(SessionId, Option<SessionId>)>>()
+                    .iter()
+                    .map(|game| game.0.to_string())
+                    .collect::<Vec<String>>();
+
+                let msg =
+                    self.new_message(MessageType::AvailableGameList, &available_games.join(","));
+
+                // send message back to client session
+                ctx.text(msg.to_string());
+            }
+
+            "/list-all-games" => {
+                let server = unlock!(self.chat_server);
+
+                let all_games = server.list_games();
+
+                // build vector of strings of available games
+                let all_games = all_games
+                    .iter()
+                    .map(|game| game.0.to_string())
+                    .collect::<Vec<String>>();
+
+                let msg = self.new_message(MessageType::AllGameList, &all_games.join(","));
+
+                // send message back to client session
+                ctx.text(msg.to_string());
+            }
+
+            // ---
+            // End Game Commands
+            // ---
+            "/self-info" => {
+                let profile = SessionProfile {
+                    username: self.username.clone(),
+                    room: self.room.clone(),
+                    id: self.id,
+                };
+
+                let msg = self.new_message(MessageType::Info, &profile.to_json());
+
+                // send message back to client session
+                ctx.text(msg.to_string());
             }
             _ => {
                 let msg =
@@ -216,12 +346,18 @@ impl Actor for WsSession {
 
         log::info!("CLIENT CONNECTED");
 
-        let msg = self.new_message(
-            MessageType::Status,
-            "You successfully connected to the server",
-        );
+        let msg = self.new_message(MessageType::Status, "You connected to the server");
 
-        ctx.text(msg.to_json())
+        ctx.text(msg.to_json());
+
+        let session_id_msg = Message {
+            msg_type: MessageType::Connect,
+            from_id: 0,
+            username: "server".to_string(),
+            content: self.id.to_string(),
+        };
+
+        ctx.text(session_id_msg.to_json())
     }
 
     fn stopping(&mut self, ctx: &mut Self::Context) -> Running {
