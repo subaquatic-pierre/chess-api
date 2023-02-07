@@ -25,6 +25,8 @@ pub enum MessageType {
     GameMove,
     AllGameList,
     AvailableGameList,
+    GameJoin,
+    GameLeave,
 }
 
 /// Chat server sends this messages to session

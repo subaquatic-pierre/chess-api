@@ -57,6 +57,7 @@ impl WsSession {
                 // send message back to client session
                 ctx.text(msg.to_string());
             }
+
             "/list-users" => {
                 // Send ListRooms message to chat server and wait for
                 // response
@@ -80,6 +81,7 @@ impl WsSession {
                     // the current room of the session is updated here
                     // ONLY
                     self.room = new_room.clone();
+                    self.game = "none".to_string();
 
                     let mut chat_server = unlock!(self.chat_server);
 
@@ -102,9 +104,35 @@ impl WsSession {
             "/new-game" => {
                 let mut server = unlock!(self.chat_server);
 
-                server.new_game(self.id, &self.username);
+                // ensure game with that name does not already exist
+                // return early if already exists
+                let games = server.list_games();
+                if games.contains_key(&self.username) {
+                    let msg = self.new_message(
+                        MessageType::Error,
+                        &format!("Game with the name {} already exists", self.username),
+                        true,
+                    );
 
-                let msg = self.new_message(MessageType::Status, "New game created", true);
+                    ctx.text(msg.to_string());
+                    return;
+                }
+
+                // set room to `none`
+                self.room = "in_game".to_string();
+                // set game name
+                self.game = self.username.clone();
+
+                // create new game if no error above
+                server.new_game(self.id, &self.username);
+                let msg = self.new_message(
+                    MessageType::Status,
+                    &format!(
+                        "New game with the name {} created and joined",
+                        self.username
+                    ),
+                    true,
+                );
 
                 // send message back to client session
                 ctx.text(msg.to_string());
@@ -119,7 +147,12 @@ impl WsSession {
 
                     let mut server = unlock!(self.chat_server);
 
-                    server.join_game(self.id, &game_name);
+                    server.join_game(self.id, &game_name, &self.username);
+
+                    // set room to `in_game`
+                    self.room = "is_game".to_string();
+                    // set game name
+                    self.game = game_name.clone();
 
                     let msg = self.new_message(
                         MessageType::Status,
@@ -129,20 +162,6 @@ impl WsSession {
 
                     // send message back to client session
                     ctx.text(msg.to_string());
-
-                    // the only time the user changes a room is here
-                    // the current room of the session is updated here
-                    // ONLY
-
-                    // set room to `in_game`
-                    self.room = "in_game".to_string();
-
-                    // set game name
-                    self.game = game_name.clone();
-
-                    // let mut chat_server = unlock!(self.chat_server);
-
-                    // chat_server.join_room(&new_room, self.id, &self.username);
                 } else {
                     let msg = self.new_message(MessageType::Error, "Game name is required", true);
 
@@ -159,19 +178,18 @@ impl WsSession {
 
                 let mut server = unlock!(self.chat_server);
 
-                // server.leave_game(self.id, &game_name);
+                server.leave_game(&self.game, self.id);
 
-                // the only time the user changes a room is here
-                // the current room of the session is updated here
-                // ONLY
-                // set room to `in_game`
+                server.join_room("main", self.id, &self.username);
+
+                // set room to `main`
                 self.room = "main".to_string();
                 // set game name
                 self.game = "none".to_string();
 
                 let msg = self.new_message(
                     MessageType::Status,
-                    &format!("New left {} chess game", self.game),
+                    &format!("You left {} chess game and joined the main room", self.game),
                     true,
                 );
 
@@ -179,23 +197,38 @@ impl WsSession {
                 ctx.text(msg.to_string());
             }
 
+            "/game-move" => {
+                if v.len() == 2 {
+                    // TODO:
+                    // ensure user is in a game
+                    let move_str = v[1].to_owned();
+
+                    let mut server = unlock!(self.chat_server);
+
+                    server.send_game_move(&self.game, &move_str, self.id);
+
+                    let msg = self.new_message(
+                        MessageType::Status,
+                        &format!("Game move sent {}", move_str),
+                        true,
+                    );
+
+                    // send message back to client session
+                    ctx.text(msg.to_string());
+                } else {
+                    let msg = self.new_message(MessageType::Error, "Move string is required", true);
+
+                    // send message back to client session
+                    ctx.text(msg.to_string());
+                }
+            }
+
             "/list-available-games" => {
                 let server = unlock!(self.chat_server);
 
-                let all_games = server.list_games();
-
-                // build vector of strings of available games
-                let available_games = all_games
-                    .iter()
-                    .filter(|game| game.1 .1.is_none())
-                    .collect::<HashMap<&String, &(SessionId, Option<SessionId>)>>()
-                    .iter()
-                    .map(|game| game.0.to_string())
-                    .collect::<Vec<String>>();
-
                 let msg = self.new_message(
                     MessageType::AvailableGameList,
-                    &available_games.join(","),
+                    &server.available_games().join(","),
                     true,
                 );
 
@@ -206,18 +239,37 @@ impl WsSession {
             "/list-all-games" => {
                 let server = unlock!(self.chat_server);
 
-                let all_games = server.list_games();
-
-                // build vector of strings of available games
-                let all_games = all_games
-                    .iter()
-                    .map(|game| game.0.to_string())
-                    .collect::<Vec<String>>();
-
-                let msg = self.new_message(MessageType::AllGameList, &all_games.join(","), true);
+                let msg = self.new_message(
+                    MessageType::AllGameList,
+                    &server.all_games().join(","),
+                    true,
+                );
 
                 // send message back to client session
                 ctx.text(msg.to_string());
+            }
+
+            "/delete-game" => {
+                if v.len() == 2 {
+                    let game_name = v[1].to_owned();
+                    let mut server = unlock!(self.chat_server);
+
+                    server.delete_game(&game_name);
+
+                    let msg = self.new_message(
+                        MessageType::Status,
+                        &format!("{} chess game deleted", self.game),
+                        true,
+                    );
+
+                    // send message back to client session
+                    ctx.text(msg.to_string());
+                } else {
+                    let msg = self.new_message(MessageType::Error, "Game name is required", true);
+
+                    // send message back to client session
+                    ctx.text(msg.to_string());
+                }
             }
 
             // ---

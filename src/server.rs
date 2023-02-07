@@ -19,67 +19,67 @@ pub struct GameManager {
 
 impl GameManager {
     pub fn new() -> Self {
-        Self {
-            games: HashMap::new(),
+        let mut games = HashMap::new();
+
+        games.insert("Firstk".to_string(), (898, None));
+        games.insert("Seconds".to_string(), (2345432, Some(345432)));
+        games.insert("Base".to_string(), (6543, Some(565)));
+
+        Self { games }
+    }
+
+    pub fn new_game(&mut self, username: &str, session_id: SessionId) {
+        self.games.insert(username.to_string(), (session_id, None));
+    }
+
+    pub fn join_game(&mut self, game_name: &str, session_id: SessionId) {
+        // TODO:
+        // handle case if game is already full
+
+        if let Some(game) = self.games.get_mut(game_name) {
+            // only add user if not already 2 players
+            if game.1.is_none() {
+                game.1 = Some(session_id);
+            }
         }
     }
 
-    pub fn new_game(&mut self, room_name: &str, session_id: SessionId, username: &str) {
-        // self.leave_all_rooms(session_id, username);
+    pub fn leave_game(&mut self, game_name: &str, session_id: SessionId) {
+        if let Some(game) = self.games.get_mut(game_name) {
+            // check if 2 players in game
+            if let Some(player_two_id) = game.1 {
+                // remove player two from game
+                if player_two_id == session_id {
+                    game.1 = None;
+                }
+            }
 
-        // // join room which already exists or create new one
-        // self.rooms
-        //     .entry(room_name.to_string())
-        //     .or_insert_with(HashSet::new)
-        //     .insert(session_id);
-
-        // // send message to client that joined room
-        // self.send_client_msg(
-        //     &format!("You joined {room_name} room"),
-        //     MessageType::Status,
-        //     session_id,
-        // );
-
-        // // notify all users within the room the that
-        // // session has connected to the room
-        // let join_content = format!("{username} joined {room_name} room");
-        // let msg = Message {
-        //     msg_type: MessageType::Status,
-        //     from_id: session_id,
-        //     username: username.to_string(),
-        //     content: join_content,
-        // };
-
-        // self.broadcast(room_name, msg, session_id);
+            // if last player leave game
+            // remove game from game_manager list
+            if game.0 == session_id {
+                self.games.remove(game_name);
+            }
+        }
     }
 
-    pub fn join_game(&mut self, room_name: &str, session_id: SessionId, username: &str) {
-        // self.leave_all_rooms(session_id, username);
+    pub fn get_opponent_id(&self, game_name: &str, session_id: SessionId) -> SessionId {
+        if let Some(game) = self.games.get(game_name) {
+            if let Some(player_two_id) = game.1 {
+                if session_id != player_two_id {
+                    player_two_id
+                } else {
+                    game.0
+                }
+            } else {
+                0
+            }
+        } else {
+            0
+        }
+    }
 
-        // // join room which already exists or create new one
-        // self.rooms
-        //     .entry(room_name.to_string())
-        //     .or_insert_with(HashSet::new)
-        //     .insert(session_id);
-
-        // // send message to client that joined room
-        // self.send_client_msg(
-        //     &format!("You joined {room_name} room"),
-        //     MessageType::Status,
-        //     session_id,
-        // );
-
-        // // notify all users within the room the that
-        // // session has connected to the room
-        // let join_content = format!("{username} joined {room_name} room");
-        // let msg = Message {
-        //     msg_type: MessageType::Status,
-        //     from_id: session_id,
-        //     username: username.to_string(),
-        //     content: join_content,
-        // };
-
-        // self.broadcast(room_name, msg, session_id);
+    pub fn delete_game(&mut self, game_name: &str) {
+        self.games.remove(game_name);
     }
 }
 
@@ -101,6 +101,8 @@ impl ChatServer {
         rooms.insert("space".to_owned(), HashSet::new());
         rooms.insert("main".to_owned(), HashSet::new());
 
+        rooms.insert("lobby".to_owned(), HashSet::new());
+
         ChatServer {
             sessions: HashMap::new(),
             rooms,
@@ -118,12 +120,14 @@ impl ChatServer {
 
     pub fn disconnect(&mut self, id: SessionId) {
         // remove session ID from rooms
-        if let Some((username, addr)) = self.sessions.remove(&id) {
+        if let Some((username, _addr)) = self.sessions.remove(&id) {
             // NOTE:
             // unable to send message to context
             // Addr is not valid tx anymore
 
             self.leave_all_rooms(id, &username);
+
+            self.leave_all_games(id);
 
             // decrement visitor count
             self.visitor_count.fetch_sub(1, Ordering::SeqCst);
@@ -133,6 +137,7 @@ impl ChatServer {
     /// Main broadcast message used to
     /// message all connected web socket sessions
     pub fn broadcast(&self, room: &str, message: Message, skip_id: SessionId) {
+        // only send to people in room
         if let Some(session_ids) = self.rooms.get(room) {
             for id in session_ids {
                 // ensure not to send to skip_id if flag set
@@ -161,30 +166,35 @@ impl ChatServer {
     pub fn join_room(&mut self, room_name: &str, session_id: SessionId, username: &str) {
         self.leave_all_rooms(session_id, username);
 
+        self.leave_all_games(session_id);
+
         // join room which already exists or create new one
         self.rooms
             .entry(room_name.to_string())
             .or_insert_with(HashSet::new)
             .insert(session_id);
 
-        // send message to client that joined room
-        let msg = self.server_message(
-            MessageType::Status,
-            &format!("You joined the {room_name} room"),
-        );
-        self.send_client_msg(session_id, msg);
+        // send message to client that joined room,
+        // only if room name is not `lobby`
+        if room_name != "lobby" {
+            let msg = self.new_server_msg(
+                MessageType::Status,
+                &format!("You joined the {room_name} room"),
+            );
+            self.send_client_msg(session_id, msg);
 
-        // notify all users within the room the that
-        // session has connected to the room
-        let join_content = format!("{username} joined {room_name} room");
+            // notify all users within the room the that
+            // session has connected to the room
+            let join_content = format!("{username} joined {room_name} room");
 
-        let msg = self.server_message(MessageType::Status, &join_content);
-        self.broadcast(room_name, msg, session_id);
+            let msg = self.new_server_msg(MessageType::Status, &join_content);
+            self.broadcast(room_name, msg, session_id);
+        }
 
         // notify all users with new user list
         // send message to client that joined room
         let user_list_message =
-            self.server_message(MessageType::UserList, &self.list_users(room_name).join(","));
+            self.new_server_msg(MessageType::UserList, &self.list_users(room_name).join(","));
 
         self.broadcast(room_name, user_list_message, 0)
     }
@@ -213,13 +223,17 @@ impl ChatServer {
     }
 
     fn leave_room(&mut self, room_name: &str, session_id: SessionId, username: &str) {
-        // message for all other users
-        let user_join_msg = self.server_message(
-            MessageType::Status,
-            &format!("{username} left the {room_name} room"),
-        );
+        // send message to all users that user left room,
+        // only if room name is not `lobby`
+        if room_name != "lobby" {
+            // message for all other users
+            let user_left_msg = self.new_server_msg(
+                MessageType::Status,
+                &format!("{username} left the {room_name} room"),
+            );
 
-        self.broadcast(room_name, user_join_msg, session_id);
+            self.broadcast(room_name, user_left_msg, session_id);
+        }
 
         // remove the session ID from room
         if let Some(room) = self.rooms.get_mut(room_name) {
@@ -230,13 +244,17 @@ impl ChatServer {
         // notify all users with new user list
         // send message to client that joined room
         let user_list_message =
-            self.server_message(MessageType::UserList, &self.list_users(room_name).join(","));
+            self.new_server_msg(MessageType::UserList, &self.list_users(room_name).join(","));
 
         self.broadcast(room_name, user_list_message, 0)
     }
 
     pub fn list_rooms(&self) -> Vec<String> {
-        self.rooms.iter().map(|room| room.0.to_owned()).collect()
+        self.rooms
+            .iter()
+            .map(|room| room.0.to_owned())
+            .filter(|room| room != "lobby" && room != "in_game")
+            .collect()
     }
 
     pub fn list_users(&self, room_name: &str) -> Vec<String> {
@@ -248,7 +266,6 @@ impl ChatServer {
                 }
             }
         }
-
         usernames
     }
 
@@ -261,110 +278,132 @@ impl ChatServer {
     // ---
 
     pub fn new_game(&mut self, session_id: SessionId, username: &str) {
-        // TODO:
-        // leave all current rooms
+        self.leave_all_rooms(session_id, username);
 
-        // let room_name = username.to_string();
+        self.join_room("in_game", session_id, username);
 
-        // self.leave_all_rooms(session_id, username);
+        self.game_manager.new_game(username, session_id);
 
-        // // join room which already exists or create new one
-        // self.rooms
-        //     .entry(room_name.to_string())
-        //     .or_insert_with(HashSet::new)
-        //     .insert(session_id);
-
-        // // send message to client that joined room
-        // self.send_client_msg(
-        //     &format!("You joined {room_name} room"),
-        //     MessageType::Status,
-        //     session_id,
-        // );
-
-        // // notify all users within the room the that
-        // // session has connected to the room
-        // let join_content = format!("{username} joined {room_name} room");
-        // let msg = Message {
-        //     msg_type: MessageType::Status,
-        //     from_id: session_id,
-        //     username: username.to_string(),
-        //     content: join_content,
-        // };
-
-        // self.broadcast(&room_name, msg, session_id);
+        self.broadcast_games();
     }
 
-    pub fn join_game(&mut self, session_id: SessionId, game_name: &str) {
-        // TODO:
-        // leave all current rooms
+    pub fn leave_game(&mut self, game_name: &str, session_id: SessionId) {
+        // notify opponent of leaving game
+        // NOTE:
+        // Must get opponent ID before leaving game
+        // otherwise cannot find game that the user is leaving
+        // from and the cannot find opponent id within that game
+        let opponent_id = self.game_manager.get_opponent_id(game_name, session_id);
+        self.game_manager.leave_game(game_name, session_id);
+        let msg = self.new_server_msg(MessageType::Status, "Opponent has left the game");
+        self.send_client_msg(opponent_id, msg);
 
-        // self.leave_all_rooms(session_id, username);
+        self.broadcast_games();
+    }
 
-        // // join room which already exists or create new one
-        // self.rooms
-        //     .entry(room_name.to_string())
-        //     .or_insert_with(HashSet::new)
-        //     .insert(session_id);
+    pub fn leave_all_games(&mut self, session_id: SessionId) {
+        // notify opponent of leaving game
+        // NOTE:
+        // Must get opponent ID before leaving game
+        // otherwise cannot find game that the user is leaving
+        // from and the cannot find opponent id within that game
+        let rooms: Vec<String> = self
+            .game_manager
+            .games
+            .iter()
+            .map(|game| game.0.to_string())
+            .collect();
 
-        // // send message to client that joined room
-        // self.send_client_msg(
-        //     &format!("You joined {room_name} room"),
-        //     MessageType::Status,
-        //     session_id,
-        // );
+        for game_name in rooms {
+            let opponent_id = self.game_manager.get_opponent_id(&game_name, session_id);
+            self.game_manager.leave_game(&game_name, session_id);
+            let msg = self.new_server_msg(MessageType::Status, "Opponent has left the game");
+            self.send_client_msg(opponent_id, msg);
+        }
 
-        // // notify all users within the room the that
-        // // session has connected to the room
-        // let join_content = format!("{username} joined {room_name} room");
-        // let msg = Message {
-        //     msg_type: MessageType::Status,
-        //     from_id: session_id,
-        //     username: username.to_string(),
-        //     content: join_content,
-        // };
+        self.broadcast_games();
+    }
 
-        // self.broadcast(room_name, msg, session_id);
+    pub fn join_game(&mut self, session_id: SessionId, game_name: &str, username: &str) {
+        // set active room on server as `lobby`
+        self.join_room("lobby", session_id, username);
+        self.game_manager.join_game(game_name, session_id);
+
+        // notify opponent of joining game
+        let opponent_id = self.game_manager.get_opponent_id(game_name, session_id);
+        let msg = self.new_server_msg(MessageType::Status, "Opponent joined the game");
+        self.send_client_msg(opponent_id, msg);
+
+        self.broadcast_games();
+    }
+
+    pub fn send_game_move(&mut self, game_name: &str, move_str: &str, session_id: SessionId) {
+        // notify opponent of joining game
+        let opponent_id = self.game_manager.get_opponent_id(game_name, session_id);
+        let msg = self.new_server_msg(MessageType::GameMove, move_str);
+        self.send_client_msg(opponent_id, msg);
+    }
+
+    pub fn delete_game(&mut self, game_name: &str) {
+        self.game_manager.delete_game(game_name);
+
+        // update all clients `lobby` of new game list
+        // for available game and all games
+        self.broadcast_games();
     }
 
     pub fn list_games(&self) -> HashMap<String, GamePlayers> {
-        // self.leave_all_rooms(session_id, username);
+        self.game_manager.games.clone()
+    }
 
-        // // join room which already exists or create new one
-        // self.rooms
-        //     .entry(room_name.to_string())
-        //     .or_insert_with(HashSet::new)
-        //     .insert(session_id);
+    pub fn available_games(&self) -> Vec<String> {
+        // build vector of strings of available games
+        self.list_games()
+            .iter()
+            .filter(|game| game.1 .1.is_none())
+            .collect::<HashMap<&String, &(SessionId, Option<SessionId>)>>()
+            .iter()
+            .map(|game| game.0.to_string())
+            .collect::<Vec<String>>()
+    }
 
-        // // send message to client that joined room
-        // self.send_client_msg(
-        //     &format!("You joined {room_name} room"),
-        //     MessageType::Status,
-        //     session_id,
-        // );
-
-        // // notify all users within the room the that
-        // // session has connected to the room
-        // let join_content = format!("{username} joined {room_name} room");
-        // let msg = Message {
-        //     msg_type: MessageType::Status,
-        //     from_id: session_id,
-        //     username: username.to_string(),
-        //     content: join_content,
-        // };
-
-        // self.broadcast(room_name, msg, session_id);
-        HashMap::new()
+    pub fn all_games(&self) -> Vec<String> {
+        // build vector of strings of available games
+        self.list_games()
+            .iter()
+            .map(|game| game.0.to_string())
+            .collect::<Vec<String>>()
     }
 
     // ---
     // Private methods
     // ---
-    fn server_message(&self, msg_type: MessageType, content: &str) -> Message {
+    fn new_server_msg(&self, msg_type: MessageType, content: &str) -> Message {
         Message {
             msg_type,
             from_id: 0,
             username: "server".to_string(),
             content: content.to_string(),
+        }
+    }
+
+    /// Broadcast all available games,
+    /// `MessageType::AvailableGameList` and `MessageType::AllGameList`
+    /// to all clients connected to the `lobby` or `in_game` room
+    fn broadcast_games(&self) {
+        // broadcast new available game list
+        let available_game_msg = self.new_server_msg(
+            MessageType::AvailableGameList,
+            &self.available_games().join(","),
+        );
+
+        let all_game_msg =
+            self.new_server_msg(MessageType::AllGameList, &self.all_games().join(","));
+
+        for room in ["lobby", "in_game"] {
+            self.broadcast(room, available_game_msg.clone(), 0);
+            // broadcast new available game list
+            self.broadcast(room, all_game_msg.clone(), 0)
         }
     }
 }
