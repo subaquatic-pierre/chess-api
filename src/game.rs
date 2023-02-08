@@ -21,11 +21,21 @@ impl SessionGame {
         }
     }
 
+    /// main join game method
+    /// if there are 2 players in the game
+    /// the game is set to `started` = true
     pub fn join_game(&mut self, black: SessionId) {
         self.black = Some(black);
-        self.started = true;
+
+        if self.num_players() == 2 {
+            self.started = true;
+        }
     }
 
+    /// main leave game method
+    /// if after the player leaves there are no
+    /// more players in the game, the game is removed
+    /// from session manager game list
     pub fn leave_game(&mut self, session_id: SessionId) {
         // check if 2 players in game
         // remove player two from game
@@ -38,6 +48,7 @@ impl SessionGame {
         }
     }
 
+    /// gets number of current players in game
     pub fn num_players(&self) -> i8 {
         let mut num: i8 = 0;
 
@@ -51,6 +62,8 @@ impl SessionGame {
         num
     }
 
+    /// get the ID of the opponent, ie. the opposite
+    /// ID of the one which is passed in as an argument
     pub fn opponent_id(&self, session_id: SessionId) -> SessionId {
         if self.white_id() == session_id {
             return self.black_id();
@@ -63,6 +76,8 @@ impl SessionGame {
         0
     }
 
+    /// If the game is not started the game is joinable
+    /// otherwise the game is not joinable
     pub fn is_joinable(&self) -> bool {
         if self.started {
             return false;
@@ -70,12 +85,15 @@ impl SessionGame {
         true
     }
 
+    /// get ID of black piece player
     pub fn black_id(&self) -> SessionId {
         if let Some(id) = self.black {
             return id;
         }
         0
     }
+
+    /// get ID of white piece player
     pub fn white_id(&self) -> SessionId {
         if let Some(id) = self.white {
             return id;
@@ -101,18 +119,18 @@ impl GameManager {
         self.games.insert(username.to_string(), game);
     }
 
-    pub fn game(&self, game_id: &str) -> Option<&SessionGame> {
-        self.games.get(game_id)
+    pub fn get_game(&mut self, game_id: &str) -> Option<&mut SessionGame> {
+        self.games.get_mut(game_id)
     }
 
-    pub fn games(&self) -> &HashMap<SessionGameId, SessionGame> {
+    pub fn get_games(&self) -> &HashMap<SessionGameId, SessionGame> {
         &self.games
     }
 
     pub fn join_game(&mut self, game_id: &str, session_id: SessionId) {
         // TODO:
         // handle case if game is already full
-        if let Some(game) = self.games.get_mut(game_id) {
+        if let Some(game) = self.get_game(game_id) {
             if game.is_joinable() {
                 game.join_game(session_id)
             }

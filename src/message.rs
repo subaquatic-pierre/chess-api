@@ -25,6 +25,7 @@ pub enum MessageType {
     GameMove,
     AllGameList,
     AvailableGameList,
+    GameChat,
     GameJoin,
     GameLeave,
 }

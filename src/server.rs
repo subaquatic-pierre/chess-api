@@ -226,31 +226,8 @@ impl ChatServer {
         // from and the cannot find opponent id within that game
         let opponent_id = self.game_manager.opponent_id(game_id, session_id);
         self.game_manager.leave_game(game_id, session_id);
-        let msg = self.new_server_msg(MessageType::Status, "Opponent has left the game");
+        let msg = self.new_server_msg(MessageType::GameLeave, "Opponent has left the game");
         self.send_client_msg(opponent_id, msg);
-
-        self.broadcast_games();
-    }
-
-    pub fn leave_all_games(&mut self, session_id: SessionId) {
-        // notify opponent of leaving game
-        // NOTE:
-        // Must get opponent ID before leaving game
-        // otherwise cannot find game that the user is leaving
-        // from and the cannot find opponent id within that game
-        let rooms: Vec<String> = self
-            .game_manager
-            .games()
-            .into_iter()
-            .map(|game| game.0.to_string())
-            .collect();
-
-        for game_id in rooms {
-            let opponent_id = self.game_manager.opponent_id(&game_id, session_id);
-            self.game_manager.leave_game(&game_id, session_id);
-            let msg = self.new_server_msg(MessageType::Status, "Opponent has left the game");
-            self.send_client_msg(opponent_id, msg);
-        }
 
         self.broadcast_games();
     }
@@ -262,7 +239,7 @@ impl ChatServer {
 
         // notify opponent of joining game
         let opponent_id = self.game_manager.opponent_id(game_id, session_id);
-        let msg = self.new_server_msg(MessageType::Status, "Opponent joined the game");
+        let msg = self.new_server_msg(MessageType::GameJoin, "Opponent joined the game");
         self.send_client_msg(opponent_id, msg);
 
         self.broadcast_games();
@@ -283,8 +260,31 @@ impl ChatServer {
         self.broadcast_games();
     }
 
+    pub fn leave_all_games(&mut self, session_id: SessionId) {
+        // notify opponent of leaving game
+        // NOTE:
+        // Must get opponent ID before leaving game
+        // otherwise cannot find game that the user is leaving
+        // from and the cannot find opponent id within that game
+        let rooms: Vec<String> = self
+            .game_manager
+            .get_games()
+            .iter()
+            .map(|game| game.0.to_string())
+            .collect();
+
+        for game_id in rooms {
+            let opponent_id = self.game_manager.opponent_id(&game_id, session_id);
+            self.game_manager.leave_game(&game_id, session_id);
+            let msg = self.new_server_msg(MessageType::GameLeave, "Opponent has left the game");
+            self.send_client_msg(opponent_id, msg);
+        }
+
+        self.broadcast_games();
+    }
+
     pub fn list_games(&self) -> HashMap<String, SessionGame> {
-        self.game_manager.games().clone()
+        self.game_manager.get_games().clone()
     }
 
     pub fn available_games(&self) -> Vec<String> {
