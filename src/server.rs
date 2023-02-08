@@ -7,81 +7,12 @@ use std::{
     },
 };
 
-use crate::message::{Message, MessageType};
+use crate::game::{GameManager, SessionGame};
 use crate::session::{SessionId, WsSession};
-
-type GamePlayers = (SessionId, Option<SessionId>);
-
-#[derive(Debug)]
-pub struct GameManager {
-    games: HashMap<String, GamePlayers>,
-}
-
-impl GameManager {
-    pub fn new() -> Self {
-        let mut games = HashMap::new();
-
-        games.insert("Firstk".to_string(), (898, None));
-        games.insert("Seconds".to_string(), (2345432, Some(345432)));
-        games.insert("Base".to_string(), (6543, Some(565)));
-
-        Self { games }
-    }
-
-    pub fn new_game(&mut self, username: &str, session_id: SessionId) {
-        self.games.insert(username.to_string(), (session_id, None));
-    }
-
-    pub fn join_game(&mut self, game_name: &str, session_id: SessionId) {
-        // TODO:
-        // handle case if game is already full
-
-        if let Some(game) = self.games.get_mut(game_name) {
-            // only add user if not already 2 players
-            if game.1.is_none() {
-                game.1 = Some(session_id);
-            }
-        }
-    }
-
-    pub fn leave_game(&mut self, game_name: &str, session_id: SessionId) {
-        if let Some(game) = self.games.get_mut(game_name) {
-            // check if 2 players in game
-            if let Some(player_two_id) = game.1 {
-                // remove player two from game
-                if player_two_id == session_id {
-                    game.1 = None;
-                }
-            }
-
-            // if last player leave game
-            // remove game from game_manager list
-            if game.0 == session_id {
-                self.games.remove(game_name);
-            }
-        }
-    }
-
-    pub fn get_opponent_id(&self, game_name: &str, session_id: SessionId) -> SessionId {
-        if let Some(game) = self.games.get(game_name) {
-            if let Some(player_two_id) = game.1 {
-                if session_id != player_two_id {
-                    player_two_id
-                } else {
-                    game.0
-                }
-            } else {
-                0
-            }
-        } else {
-            0
-        }
-    }
-
-    pub fn delete_game(&mut self, game_name: &str) {
-        self.games.remove(game_name);
-    }
-}
+use crate::{
+    message::{Message, MessageType},
+    session,
+};
 
 #[derive(Debug)]
 pub struct ChatServer {
@@ -287,14 +218,14 @@ impl ChatServer {
         self.broadcast_games();
     }
 
-    pub fn leave_game(&mut self, game_name: &str, session_id: SessionId) {
+    pub fn leave_game(&mut self, game_id: &str, session_id: SessionId) {
         // notify opponent of leaving game
         // NOTE:
         // Must get opponent ID before leaving game
         // otherwise cannot find game that the user is leaving
         // from and the cannot find opponent id within that game
-        let opponent_id = self.game_manager.get_opponent_id(game_name, session_id);
-        self.game_manager.leave_game(game_name, session_id);
+        let opponent_id = self.game_manager.opponent_id(game_id, session_id);
+        self.game_manager.leave_game(game_id, session_id);
         let msg = self.new_server_msg(MessageType::Status, "Opponent has left the game");
         self.send_client_msg(opponent_id, msg);
 
@@ -309,14 +240,14 @@ impl ChatServer {
         // from and the cannot find opponent id within that game
         let rooms: Vec<String> = self
             .game_manager
-            .games
-            .iter()
+            .games()
+            .into_iter()
             .map(|game| game.0.to_string())
             .collect();
 
-        for game_name in rooms {
-            let opponent_id = self.game_manager.get_opponent_id(&game_name, session_id);
-            self.game_manager.leave_game(&game_name, session_id);
+        for game_id in rooms {
+            let opponent_id = self.game_manager.opponent_id(&game_id, session_id);
+            self.game_manager.leave_game(&game_id, session_id);
             let msg = self.new_server_msg(MessageType::Status, "Opponent has left the game");
             self.send_client_msg(opponent_id, msg);
         }
@@ -324,55 +255,44 @@ impl ChatServer {
         self.broadcast_games();
     }
 
-    pub fn join_game(&mut self, session_id: SessionId, game_name: &str, username: &str) {
+    pub fn join_game(&mut self, session_id: SessionId, game_id: &str, username: &str) {
         // set active room on server as `lobby`
         self.join_room("lobby", session_id, username);
-        self.game_manager.join_game(game_name, session_id);
+        self.game_manager.join_game(game_id, session_id);
 
         // notify opponent of joining game
-        let opponent_id = self.game_manager.get_opponent_id(game_name, session_id);
+        let opponent_id = self.game_manager.opponent_id(game_id, session_id);
         let msg = self.new_server_msg(MessageType::Status, "Opponent joined the game");
         self.send_client_msg(opponent_id, msg);
 
         self.broadcast_games();
     }
 
-    pub fn send_game_move(&mut self, game_name: &str, move_str: &str, session_id: SessionId) {
+    pub fn send_game_move(&mut self, game_id: &str, move_str: &str, session_id: SessionId) {
         // notify opponent of joining game
-        let opponent_id = self.game_manager.get_opponent_id(game_name, session_id);
+        let opponent_id = self.game_manager.opponent_id(game_id, session_id);
         let msg = self.new_server_msg(MessageType::GameMove, move_str);
         self.send_client_msg(opponent_id, msg);
     }
 
-    pub fn delete_game(&mut self, game_name: &str) {
-        self.game_manager.delete_game(game_name);
+    pub fn delete_game(&mut self, game_id: &str) {
+        self.game_manager.delete_game(game_id);
 
         // update all clients `lobby` of new game list
         // for available game and all games
         self.broadcast_games();
     }
 
-    pub fn list_games(&self) -> HashMap<String, GamePlayers> {
-        self.game_manager.games.clone()
+    pub fn list_games(&self) -> HashMap<String, SessionGame> {
+        self.game_manager.games().clone()
     }
 
     pub fn available_games(&self) -> Vec<String> {
-        // build vector of strings of available games
-        self.list_games()
-            .iter()
-            .filter(|game| game.1 .1.is_none())
-            .collect::<HashMap<&String, &(SessionId, Option<SessionId>)>>()
-            .iter()
-            .map(|game| game.0.to_string())
-            .collect::<Vec<String>>()
+        self.game_manager.available_games()
     }
 
     pub fn all_games(&self) -> Vec<String> {
-        // build vector of strings of available games
-        self.list_games()
-            .iter()
-            .map(|game| game.0.to_string())
-            .collect::<Vec<String>>()
+        self.game_manager.all_games()
     }
 
     // ---

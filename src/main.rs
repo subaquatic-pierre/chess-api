@@ -8,6 +8,7 @@ use actix_web::{middleware::Logger, web, App, HttpServer};
 
 mod app;
 mod constants;
+mod game;
 mod macros;
 mod message;
 mod routes;
