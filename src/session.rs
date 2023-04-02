@@ -364,7 +364,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
             // main message type, used to communicate with web socket session
             // check if message is a command or message to be sent to chat server
             ws::Message::Text(text) => {
-                log::info!("WEBSOCKET MESSAGE: {text:?}");
+                // log::info!("WEBSOCKET MESSAGE: {text:?}");
 
                 let m = text.trim();
                 // we check for /sss type of messages
