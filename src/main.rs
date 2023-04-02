@@ -1,5 +1,6 @@
 #![allow(clippy::from_over_into)]
 
+use dotenv::dotenv;
 use std::sync::{atomic::AtomicUsize, Arc, Mutex};
 
 use actix_cors::Cors;
@@ -14,19 +15,30 @@ mod message;
 mod routes;
 mod server;
 mod session;
+mod utils;
 
 use app::new_app_state;
 use routes::{register_chat_routes, register_server_routes};
+use utils::print_log_levels;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
+    // load from .env
+    dotenv().ok();
+    // get host and port from .env
+    let port = std::env::var("PORT")
+        .expect("Port must be set by .env")
+        .parse::<u16>()
+        .unwrap();
+    let host = std::env::var("HOST").expect("Host must be set by .env");
+
+    env_logger::init_from_env(env_logger::Env::new().filter("RUST_LOG"));
+
+    print_log_levels();
 
     let app_state = new_app_state();
 
-    // TODO:
-    // set const host and port
-    log::info!("starting HTTP server at http://0.0.0.0:8080");
+    log::info!("starting HTTP server at http://{host}:{port}");
 
     HttpServer::new(move || {
         App::new()
@@ -38,7 +50,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(Cors::permissive())
     })
     .workers(2)
-    .bind(("0.0.0.0", 8080))?
+    .bind((host, port))?
     .run()
     .await
 }
